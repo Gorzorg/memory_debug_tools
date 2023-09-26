@@ -59,7 +59,7 @@ static MEM_DEBUG_ALLOCATIONS_TRACKER: AllocationTracker = AllocationTracker::con
 #[derive(Debug)]
 pub struct MemDebug<Data = ()> {
     pub(crate) id: Id,
-    data: std::mem::ManuallyDrop<Data>,
+    data: core::mem::ManuallyDrop<Data>,
 }
 
 impl<Data> std::ops::Drop for MemDebug<Data> {
@@ -131,18 +131,50 @@ impl<Data> MemDebug<Data> {
     /// ## Caution
     ///
     /// Creating any `MemDebug` object directly with this method **will** break
-    /// the invariants of `MEM_DEBUG_ALLOCATIONS_TRACKER`, unless it is used
-    /// in conjunction with other low level memory management devices such as
-    /// `core::mem::ManuallyDrop`.
+    /// the invariants of `MEM_DEBUG_ALLOCATIONS_TRACKER`, unless this is used
+    /// in conjunction with `MemDebug::into_raw_parts`, or other low level
+    /// memory management devices, such as `core::mem::ManuallyDrop`.
     ///
-    /// Breaking the invariants of `MEM_DEBUG_ALLOCATIONS_TRACKER` may cause the program
-    /// to panic, and to warn the user about nonexistent memory error bugs.
+    /// Breaking the invariants of `MEM_DEBUG_ALLOCATIONS_TRACKER` may cause
+    /// the program to panic, and to warn the user about nonexistent memory
+    /// error bugs.
     #[inline]
     pub unsafe fn from_raw_parts(id: Id, data: Data) -> Self {
         Self {
             id,
             data: core::mem::ManuallyDrop::new(data),
         }
+    }
+
+    /// Disassembles a `MemDebug` instances into an ordered tuple that consists
+    /// of its fields.
+    ///
+    /// ## Caution
+    ///
+    /// Disassembling any `MemDebug` object directly with this method **will**
+    /// break the invariants of `MEM_DEBUG_ALLOCATIONS_TRACKER`, unless this is
+    /// used in conjunction with `MemDebug::from_raw_parts`, or other low level
+    /// memory management devices, such as `core::mem::ManuallyDrop`.
+    ///
+    /// Breaking the invariants of `MEM_DEBUG_ALLOCATIONS_TRACKER` may cause
+    /// the program to panic, and to warn the user about nonexistent memory
+    /// error bugs.
+    #[inline]
+    pub unsafe fn into_raw_parts(self) -> (Id, Data) {
+        let md = core::mem::ManuallyDrop::new(self);
+        (md.id, unsafe {
+            // Safety: We are treating `Data` as if it was `Copy`,
+            // but this does not cause problems, because when `md` is
+            // destroyed, the net effect is the same as just moving `md.data`
+            //
+            // Also, transmuting the pointer from `*cont ManuallyDrop<T>` to
+            // `*const T` is sound, because
+            // ```
+            // #[repr(transparent)]
+            // struct ManuallyDrop<T: ?Sized> { value: T }
+            // ```
+            core::ptr::read(&md.data as *const _ as *const _)
+        })
     }
 
     /// Given an instance of `Box<Data>`, create a `MemDebug<Data> instance with it.
